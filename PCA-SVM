@@ -1,0 +1,122 @@
+%% PCA-SVM 5-Fold Cross Validation
+% Author: Zhonghua Shen
+% Date: 2025-09-05
+% Description: PCA-SVM for bacterial classification
+
+%% -------------------------------
+% PCA-SVM
+%% -------------------------------
+
+% load data
+loadedData = load('cvIndices.mat');
+X_train = loadedData.X_train;
+y_train = loadedData.y_train;
+X_validation = loadedData.X_validation;
+y_validation = loadedData.y_validation;
+feature_names = loadedData.feature_names;
+
+% Generate 5-fold cross validation splits
+cv = cvpartition(y_train, 'KFold', 5);
+
+% Standardization
+data_mean = mean(X_train);
+data_std = std(X_train);
+X_train_scaled = (X_train - data_mean) ./ data_std;
+X_validation_scaled = (X_validation - data_mean) ./ data_std;
+
+% PCA 
+[coeff, score, ~, ~, explained] = pca(X_train_scaled);
+
+% Select principal components that explain >= 85% of the variance
+explained_variance = cumsum(explained);
+numComponents = find(explained_variance >= 85, 1);
+
+% The first 10 principal component loadings
+figure;
+for i = 1:10
+    subplot(5,2,i);
+    plot(coeff(:,i), 'LineWidth',2);
+    title(['PC ' num2str(i)]);
+    xlabel('Features');
+    ylabel('Loadings');
+    grid off;
+end
+sgtitle('Top 10 Principal Components');
+
+numPCPlot = 10; 
+explained_10 = explained(1:numPCPlot);
+cumulative_explained_10 = cumsum(explained(1:numPCPlot));
+
+figure;
+subplot(1,2,1);
+plot(1:numPCPlot, explained_10, '-o');
+xlabel('Principal Component');
+ylabel('Explained Variance (%)');
+title('Explained Variance of Top 10 PCs');
+grid on;
+
+subplot(1,2,2);
+plot(1:numPCPlot, cumulative_explained_10, '-o');
+xlabel('Principal Component');
+ylabel('Cumulative Explained Variance (%)');
+title('Cumulative Explained Variance of Top 10 PCs');
+grid on;
+sgtitle('Selection of PC Quantity in PCA-SVM');
+
+% Dimensionality reduction
+X_train_pca = score(:,1:numComponents);
+X_validation_pca = X_validation_scaled * coeff(:,1:numComponents);
+
+% 5-fold CV voting on validation set
+numFolds = cv.NumTestSets;
+allValPredictions = zeros(length(y_validation), numFolds);
+
+for fold = 1:numFolds
+   
+    trainIdxFold = training(cv, fold);
+    X_trainFold = X_train_pca(trainIdxFold, :);
+    y_trainFold = y_train(trainIdxFold);
+
+% Training the SVM
+    t = templateSVM('Standardize', true, 'KernelFunction', 'linear');
+    SVMModel = fitcecoc(X_trainFold, y_trainFold, 'Learners', t);
+
+    % Predictions on an independent validation set
+    allValPredictions(:, fold) = predict(SVMModel, X_validation_pca);
+end
+
+% Final model
+finalPredictions = mode(allValPredictions, 2);
+
+% Accuracy
+finalAccuracy = sum(finalPredictions == y_validation) / length(y_validation);
+disp(['Final Validation Accuracy on Independent Set (CV Voting): ', num2str(finalAccuracy)]);
+
+% Confusion Matrix
+y_validation_categorical = categorical(y_validation);
+finalPredictions_categorical = categorical(finalPredictions);
+confMat_test = confusionmat(y_validation_categorical, finalPredictions_categorical);
+
+% Recall, Precision,and F1 score
+numClasses = length(unique(y_validation_categorical));
+precision_test = zeros(numClasses,1);
+recall_test = zeros(numClasses,1);
+f1_test = zeros(numClasses,1);
+
+for i = 1:numClasses
+    tp = confMat_test(i,i);
+    fp = sum(confMat_test(:,i)) - tp;
+    fn = sum(confMat_test(i,:)) - tp;
+    precision_test(i) = tp / (tp + fp);
+    recall_test(i) = tp / (tp + fn);
+    f1_test(i) = 2*(precision_test(i)*recall_test(i)) / (precision_test(i)+recall_test(i));
+end
+
+disp(['Mean Precision: ', num2str(mean(precision_test))]);
+disp(['Mean Recall: ', num2str(mean(recall_test))]);
+disp(['Mean F1 Score: ', num2str(mean(f1_test))]);
+
+% Save model
+save('Path', ...'finalPredictions', 'confMat_test', 'precision_test', 'recall_test', 'f1_test', ...
+    'coeff', 'numComponents', 'data_mean', 'data_std', 'explained');
+
