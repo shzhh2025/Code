@@ -1,0 +1,33 @@
+%% CNN model application
+% Author: Zhonghua Shen
+% Date: 2025-09-05
+% Description: CNN model application for bacterial classification
+
+%% -------------------------------
+% Application
+%% -------------------------------
+
+% trainedModel: Trained CNN model
+% Data: New data
+% Labels: New lables
+
+% Rename
+X_new = Data;
+Y_true = categorical(Labels);  
+numSamples = size(X_new,1);
+
+% Reshap
+X_new = reshape(X_new', [size(X_new,2), 1, 1, numSamples]);
+
+% Predict
+Y_pred = classify(trainedModel, X_new);
+
+% Accuracy
+accuracy = sum(Y_pred == Y_true) / numel(Y_true);
+
+% Confusion Matrix
+cm = confusionmat(Y_true, Y_pred);
+
+figure;
+confusionchart(Y_true, Y_pred);
+title('Confusion Matrix');
