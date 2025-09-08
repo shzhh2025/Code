@@ -1,0 +1,226 @@
+%% Subset division
+% Author: Zhonghua Shen
+% Date: 2025-09-05
+% Description: 20 new Subsets division 
+
+%% -------------------------------
+% Subset division
+%% -------------------------------
+
+loadedData = load('Ntotal.mat');
+Ntotal = loadedData.Ntotal;
+
+% labels and features
+labels = Ntotal(2:end,1);  
+features = Ntotal(2:end,2:end); 
+numClasses = numel(unique(labels));
+numSamples = size(features,1);
+numSubsets = 20; 
+
+allSubsets = cell(numSubsets,1);
+subsetDistribution = zeros(numSubsets, numClasses); 
+
+% subset
+for i = 1:numSubsets
+    subsetFeatures = [];
+    subsetLabels = [];
+    
+    for j = 1:numClasses
+        classIndices = find(labels == j);
+        classCount = length(classIndices);
+        permutedIndices = classIndices(randperm(classCount));
+        subsetRatio = 0.1 + 0.4*rand();
+        subsetCount = max(1, round(subsetRatio * classCount));
+        sampledIdx = permutedIndices(1:subsetCount);
+        subsetFeatures = [subsetFeatures; features(sampledIdx,:)];
+        subsetLabels = [subsetLabels; labels(sampledIdx)];
+        subsetDistribution(i,j) = subsetCount;
+    end
+    
+    % Save subsets
+    allSubsets{i}.features = subsetFeatures;
+    allSubsets{i}.labels = subsetLabels;
+end
+
+%% -------------------------------
+% Random Forest
+%% -------------------------------
+
+loadedData = load('allSubsets.mat');
+allSubsets = loadedData.allSubsets;
+
+numSubsets = length(allSubsets);
+numClasses = numel(unique(allSubsets{1}.labels));
+nTrees = 300;
+minLeafSizes = 10;
+accuracies = zeros(numSubsets,1);
+classDistribution = zeros(numSubsets,numClasses);
+
+for i = 1:numSubsets
+    X = allSubsets{i}.features;
+    y = allSubsets{i}.labels;
+    
+    % training and test sets（80%/20%）
+    numSamples = size(X,1);
+    randIdx = randperm(numSamples);
+    trainCount = round(0.8 * numSamples);
+    trainIndices = randIdx(1:trainCount);
+    testIndices  = randIdx(trainCount+1:end);
+    
+    X_train = X(trainIndices,:);
+    y_train = y(trainIndices);
+    X_test  = X(testIndices,:);
+    y_test  = y(testIndices);
+    
+    for j = 1:numClasses
+        classDistribution(i,j) = sum(y_train == j);
+    end
+    % Train RF
+    finalModel = TreeBagger(nTrees, X_train, y_train, ...
+        'OOBPrediction','On','Method','classification', ...
+        'OOBPredictorImportance','On','MinLeafSize', minLeafSizes);
+    % Accuracy
+    predictions = predict(finalModel, X_test);
+    predictions = str2double(predictions); 
+    accuracies(i) = sum(predictions == y_test) / length(y_test);
+end
+
+save('accuracies.mat', 'accuracies');
+%% -------------------------------
+% PCA-SVM
+%% -------------------------------
+
+loadedData = load('allSubsets.mat');
+allSubsets = loadedData.allSubsets;
+
+numSubsets = length(allSubsets);
+numClasses = numel(unique(allSubsets{1}.labels));
+accuracies = zeros(numSubsets,1);
+classDistribution = zeros(numSubsets,numClasses);
+
+for i = 1:numSubsets
+    X = allSubsets{i}.features;
+    y = allSubsets{i}.labels;
+   
+    for j = 1:numClasses
+        classDistribution(i,j) = sum(y == j);
+    end
+    X_scaled = zscore(X);
+    
+    % PCA
+    [coeff, score, ~, ~, explained, mu] = pca(X_scaled);
+    % PC=explained_variance >= 85%
+    explained_variance = cumsum(explained);
+    numComponents = find(explained_variance >= 85, 1);
+    X_pca = score(:, 1:numComponents);
+    
+    % training and test sets（80%/20%）
+    numSamples = size(X_pca,1);
+    randIdx = randperm(numSamples);
+trainCount = round(0.8 * numSamples);
+
+    trainIndices = randIdx(1:trainCount);
+    testIndices  = randIdx(trainCount+1:end);
+    X_train = X_pca(trainIndices,:);
+    y_train = y(trainIndices);
+    X_test  = X_pca(testIndices,:);
+    y_test  = y(testIndices);
+    
+    % Train ECOC-SVM
+    t = templateSVM('Standardize', true, 'KernelFunction', 'linear');
+    SVMModel = fitcecoc(X_train, y_train, 'Learners', t);
+    y_pred = predict(SVMModel, X_test);
+    
+    % Accuracy
+    accuracies(i) = sum(y_pred == y_test) / length(y_test);
+end
+
+save('accuracies_pca_svm.mat', 'accuracies');
+
+
+
+%% -------------------------------
+% CNN
+%% -------------------------------
+
+loadedData = load('allSubsets.mat');
+allSubsets = loadedData.allSubsets;
+
+numSubsets = length(allSubsets);
+numClasses = numel(unique(allSubsets{1}.labels));
+
+accuracies = zeros(numSubsets,1);
+classDistribution = zeros(numSubsets,numClasses);
+
+for i = 1:numSubsets
+    X = allSubsets{i}.features;
+    Y = allSubsets{i}.labels;
+    
+    Y = categorical(Y);
+    
+    for j = 1:numClasses
+        classDistribution(i,j) = sum(Y == categorical(j));
+    end
+    
+    % training and test sets（80%/20%）
+    numSamples = size(X,1);
+    randIdx = randperm(numSamples);
+    trainCount = round(0.8 * numSamples);
+    
+    trainIndices = randIdx(1:trainCount);
+    testIndices  = randIdx(trainCount+1:end);
+    
+    XTrain = X(trainIndices, :);
+    YTrain = Y(trainIndices);
+    XTest  = X(testIndices, :);
+    YTest  = Y(testIndices);
+    
+    % Reshap
+    XTrain = reshape(XTrain', [1288, 1, 1, size(XTrain, 1)]);
+    XTest  = reshape(XTest', [1288, 1, 1, size(XTest, 1)]);
+    
+    % CNN
+    layers = [
+        imageInputLayer([1288 1 1], 'Name', 'input')
+
+        convolution2dLayer([5 1], 10, 'Padding', 'same', 'Name', 'conv1')
+        reluLayer('Name', 'relu1')
+        maxPooling2dLayer([2 1], 'Stride', [2 1], 'Name', 'maxpool1')
+
+        convolution2dLayer([5 1], 20, 'Padding', 'same', 'Name', 'conv2')
+        reluLayer('Name', 'relu2')
+        maxPooling2dLayer([2 1], 'Stride', [2 1], 'Name', 'maxpool2')
+
+        convolution2dLayer([3 1], 40, 'Padding', 'same', 'Name', 'conv3')
+        reluLayer('Name', 'relu3')
+
+        flattenLayer('Name', 'flatten')
+        dropoutLayer(0.5, 'Name', 'dropout')
+
+        fullyConnectedLayer(256, 'Name', 'fc1')
+        reluLayer('Name', 'relu4')
+        fullyConnectedLayer(64, 'Name', 'fc2')
+        reluLayer('Name', 'relu5')
+        fullyConnectedLayer(numClasses, 'Name', 'fc3')
+        softmaxLayer('Name', 'softmax')
+        classificationLayer('Name', 'output')
+    ];
+
+    options = trainingOptions('adam', ...
+        'MaxEpochs', 20, ...
+        'MiniBatchSize', 16, ...
+        'ValidationData', {XTest, YTest}, ...
+        'ValidationFrequency', 30, ...
+        'Verbose', false, ...
+        'Plots', 'training-progress');
+
+    % Train
+    [net, info] = trainNetwork(XTrain, YTrain, layers, options);
+    YPred = classify(net, XTest);
+
+    % Accuracy
+    accuracies(i) = sum(YPred == YTest) / numel(YTest);
+end
+
+save('accuracies_cnn.mat', 'accuracies');
+
