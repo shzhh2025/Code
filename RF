@@ -1,0 +1,199 @@
+%% RF 5-Fold Cross Validation
+% Author: Zhonghua Shen
+% Date: 2025-09-05
+% Description: Random Forest for bacterial classification
+
+%% -------------------------------
+% RF
+%% -------------------------------
+
+% load data
+loadedData = load('cvIndices.mat');
+X_train = loadedData.X_train;
+y_train = loadedData.y_train;
+X_validation = loadedData.X_validation;
+y_validation = loadedData.y_validation;
+feature_names = loadedData.feature_names;
+
+% Generate 5-fold cross validation splits
+cv = cvpartition(y_train, 'KFold', 5);
+
+% Tree
+nTreesRange = 50:50:500;
+oobErrors = zeros(length(nTreesRange), 1);
+% 5 fold
+parfor i = 1:length(nTreesRange)
+    foldErrors = zeros(cv.NumTestSets, 1);
+% Save OOB
+    for fold = 1:cv.NumTestSets
+        trainIdxFold = training(cv, fold);
+        valIdxFold = test(cv, fold);
+        X_trainFold = X_train(trainIdxFold, :);
+        y_trainFold = y_train(trainIdxFold);
+        X_valFold = X_train(valIdxFold, :);
+        y_valFold = y_train(valIdxFold);
+        
+        % RF model
+        model = TreeBagger(nTreesRange(i), X_trainFold, y_trainFold, ...
+            'OOBPrediction', 'On', 'Method', 'classification', ...
+            'OOBPredictorImportance', 'On');
+        
+        foldErrors(fold) = oobError(model, 'Mode', 'ensemble');
+    end
+    
+    % average OOB
+    oobErrors(i) = mean(foldErrors);
+end
+
+% Figure OOB
+figure;
+plot(nTreesRange, oobErrors, '-o');
+xlabel('Number of Trees');
+ylabel('Average OOB Classification Error');
+title('Average OOB Error vs Number of Trees');
+% Set tree as 300, set minLeafSizes
+nTrees = 300;
+minLeafSizes = 10:10:100;
+oobErrors = zeros(length(minLeafSizes), 1);
+
+% 5 fold
+kfolds = 5;
+cvPart = cvpartition(y_train, 'KFold', kfolds);
+
+parfor i = 1:length(minLeafSizes)
+    minLeafSize = minLeafSizes(i);
+    cvErr = zeros(kfolds, 1);
+    for k = 1:kfolds
+        trainIdxFold = training(cvPart, k);
+        valIdxFold = test(cvPart, k);
+        X_cvTrain = X_train(trainIdxFold, :);
+        y_cvTrain = y_train(trainIdxFold);
+        X_cvVal = X_train(valIdxFold, :);
+        y_cvVal = y_train(valIdxFold);
+        
+        % RF
+        model = TreeBagger(nTrees, X_cvTrain, y_cvTrain, ...
+            'OOBPrediction', 'On', 'Method', 'classification', ...
+            'OOBPredictorImportance', 'On', 'MinLeafSize', minLeafSize);
+        predictions = predict(model, X_cvVal);
+        
+        % Change y_cvVal to categorical
+        y_cvVal_categorical = categorical(y_cvVal);
+   
+        cvErr(k) = sum(predictions ~= y_cvVal_categorical) / length(y_cvVal);
+    end
+    
+    % OOB
+    oobErrors(i) = mean(cvErr);
+end
+% Figure
+figure;
+plot(minLeafSizes, oobErrors, '-o');
+xlabel('Min Leaf Size');
+ylabel('Validation Error');
+title('Validation Error vs Min Leaf Size');
+
+% minLeafSizes
+[~, optimalIdx] = min(oobErrors);
+optimalMinLeafSize = 10;
+disp(['Optimal min leaf size: ', num2str(optimalMinLeafSize)]);
+Optimal min leaf size: 10
+
+% Final model
+finalModel = TreeBagger(300, X_train, y_train, ...
+    'OOBPrediction', 'On', 'Method', 'classification', ...
+'OOBPredictorImportance', 'On', 'MinLeafSize', optimalMinLeafSize);
+
+% Final prediction
+[predictions, scores] = predict(finalModel, X_validation);
+predictions = str2double(predictions);
+
+% Accuracy
+accuracy = sum(predictions == y_validation) / length(y_validation);
+disp(['Validation Accuracy: ', num2str(accuracy)]);
+Validation Accuracy: 0.94013
+
+% Confusion Matrix
+confMat = confusionmat(y_validation, predictions);
+figure;
+confusionchart(confMat);
+title('Confusion Matrix');
+y_validation = categorical(y_validation);
+testConfMat = confusionmat(y_validation, testPredictions);
+
+% Recall, Precision, and F1 Score
+testRecall = diag(testConfMat) ./ sum(testConfMat, 2);
+testPrecision = diag(testConfMat) ./ sum(testConfMat, 1)';
+testF1Score = 2 * (testPrecision .* testRecall) ./ (testPrecision + testRecall);
+testOverallRecall = mean(testRecall, 'omitnan');
+testOverallPrecision = mean(testPrecision, 'omitnan');
+testOverallF1Score = mean(testF1Score, 'omitnan');
+
+% Change
+numericY_train = double(y_train);
+numericY_validation = double(y_validation);
+
+% Save
+save('Path/model.mat', 'finalModel');
+save('Path/data.mat', 'X_train', 'y_train', 'X_validation', 'y_validation', feature_names');
+
+
+# Calculate SHAP value
+import scipy.io
+import numpy as np
+import shap
+import os
+from sklearn.ensemble import RandomForestClassifier
+file_path = 'Path/'
+os.makedirs(file_path, exist_ok=True)
+data_file_path = 'Path/data.mat'
+shap_values_path = 'Path/shap_values.npy'
+data = scipy.io.loadmat(file_path + 'data.mat')
+X_train = data['X_train']
+y_train = data['y_train'].ravel()
+X_validation = data['X_validation']
+# Bulid RF
+model = RandomForestClassifier(n_estimators=300, min_samples_leaf=10)
+model.fit(X_train, y_train)
+# Caulate SHAP
+explainer = shap.TreeExplainer(model)
+shap_values = explainer.shap_values(X_validation)
+# Save SHAP
+np.save(file_path + 'shap_values.npy', shap_values)
+
+% SHAP visualization
+python_script_path = 'Path/RF.py';
+shap_values_path = 'Path/shap_values.npy';
+% Running a Python script
+system(['python "', python_script_path, '"']);
+% Reading .npy files
+shap_values_py = py.numpy.load(shap_values_path);
+% Convert to MATLAB array
+shap_values = double(shap_values_py);
+% Calculate the mean absolute SHAP value for each feature
+feature_names = feature_names(:); 
+mean_abs_shap_values = mean(abs(shap_values), 1);
+% Top 50
+[~, sorted_idx] = sort(mean_abs_shap_values, 'descend');
+top_50_idx = sorted_idx(1:50);
+% Top 50 name
+top_50_feature_names = feature_names(top_50_idx);
+top_50_idx = flip(top_50_idx);
+top_50_feature_names = flip(top_50_feature_names);
+% Figure
+figure;
+hold on;
+colors = jet(length(top_50_idx));
+for j = 1:length(top_50_idx)
+feature_idx = top_50_idx(j);
+scatter(shap_values(:, feature_idx), repmat(j, size(shap_values, 1), 1), 15, shap_values(:, feature_idx), 'filled');
+end
+hold off;
+
+set(gca, 'YTick', 1:50);
+set(gca, 'YTickLabel', top_50_feature_names);
+xlabel('SHAP Value');
+ylabel('Feature');
+title('Top 50 Features Based on SHAP Values');
+colormap jet;
+colorbar;
