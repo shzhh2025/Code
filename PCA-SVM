@@ -89,7 +89,7 @@ end
 finalPredictions = mode(allValPredictions, 2);
 
 % Accuracy
-finalAccuracy = sum(finalPredictions == y_validation) / length(y_validation);
+finalAccuracy = sum(categorical(finalPredictions) == y_validation) / length(y_validation);
 disp(['Final Validation Accuracy on Independent Set (CV Voting): ', num2str(finalAccuracy)]);
 
 % Confusion Matrix
