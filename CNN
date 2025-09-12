@@ -80,7 +80,7 @@ trainingLossAll{i} = info.TrainingLoss;
 validationLossAll{i} = info.ValidationLoss; 
 trainingAccuracyAll{i} = info.TrainingAccuracy; 
 validationAccuracyAll{i} = info.ValidationAccuracy; 
-End
+end
 
 % Average
 meanTrainingLoss = mean(cat(1, trainingLossAll{:}), 1);
